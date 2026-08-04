@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>名探偵コナン エピソード検索</title>
+<style>
+:root {
+  --bg: #fff; --fg: #1a1a1a; --sub: #666; --line: #e2e2e2;
+  --card: #fafafa; --accent: #1a5fb4; --badge: #eef2f7; --warn: #b4451a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c; --fg: #e8e8e8; --sub: #9aa0a6; --line: #2e3238;
+    --card: #1e2126; --accent: #7aa7e8; --badge: #262b33; --warn: #e08a5a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+header {
+  position: sticky; top: 0; z-index: 10; background: var(--bg);
+  border-bottom: 1px solid var(--line); padding: 8px 12px;
+  /* ヘッダをビューポートより高くしない。
+     フィルタを開くと中身が 1900px を超え、sticky 要素が画面より高い状態になる。
+     このときの挙動はブラウザ差が大きく、iOS Safari では下まで辿り着けなくなる。
+     縦を制限したうえで、あふれる分は #filters 側でスクロールさせる。
+
+     画面いっぱい（100dvh）にしないのは、その下の件数表示を残すため。
+     決定 5-3 のとおり件数は「絞り込みが効いているかの唯一の手がかり」で、
+     条件をいじりながら結果が何件になるかを見たい */
+  display: flex; flex-direction: column;
+  max-height: 85vh;
+  max-height: 85dvh;   /* iOS はアドレスバーの伸縮で 100vh がずれる */
+}
+h1 { font-size: 16px; margin: 0 0 6px; }
+.bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bar input[type=search] { flex: 1 1 120px; min-width: 0; }
+input, select, button {
+  font: inherit; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+}
+button { cursor: pointer; }
+button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+button.on.active { color: #fff; }
+label.chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.count { color: var(--sub); font-size: 13px; padding: 6px 12px; }
+/* 決定 2-3: 除外した「判定不能」の件数を、その場で含められるボタンにする */
+.count .link {
+  font: inherit; color: var(--accent); background: none; border: none;
+  padding: 0; text-decoration: underline; cursor: pointer;
+}
+main { padding: 0 12px 40px; }
+
+/* --- フィルタ --- */
+#filters { display: none; border-bottom: 1px solid var(--line); padding: 4px 0 10px; }
+#filters.open {
+  display: block;
+  /* ヘッダの余った高さを受け取り、あふれた分はここでスクロールする。
+     min-height:0 が無いと flex アイテムは縮まず、はみ出したまま届かなくなる */
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;    /* 端まで来ても背後の一覧を動かさない */
+  -webkit-overflow-scrolling: touch;
+}
+.group { border-top: 1px solid var(--line); }
+.group > summary {
+  cursor: pointer; padding: 9px 2px; font-weight: 600; font-size: 14px;
+  list-style: none; display: flex; justify-content: space-between;
+}
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::after { content: "＋"; color: var(--sub); }
+.group[open] > summary::after { content: "−"; }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 10px; }
+.opts button { font-size: 13px; padding: 5px 10px; border-radius: 14px; }
+.hint { color: var(--sub); font-size: 12px; padding: 0 0 6px; }
+
+/* --- 絞り込み中の条件（パネルを閉じても見える） --- */
+#active { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 0 2px; }
+#active:empty { display: none; }
+#active .tag {
+  font-size: 12px; background: var(--accent); color: #fff;
+  border: none; border-radius: 13px; padding: 4px 9px; cursor: pointer;
+}
+#active .tag::after { content: " ×"; opacity: .75; }
+#active .lbl { font-size: 12px; color: var(--sub); align-self: center; }
+
+/* --- 一覧 --- */
+.item { border-bottom: 1px solid var(--line); }
+/* 決定 8-2: 視聴済みは隠さずグレーにする。「あれ何話だっけ」を探せるように。
+   チェックボックスは薄くしない（外す操作の当たり判定を見失わせないため） */
+.item.watched .no, .item.watched .body { opacity: .45; }
+.item.watched.open .body { opacity: 1; }
+.row { display: flex; gap: 9px; align-items: flex-start; padding: 10px 2px; }
+.row .no { color: var(--sub); font-size: 12px; white-space: nowrap; padding-top: 2px; min-width: 62px; }
+.row .body { flex: 1; min-width: 0; cursor: pointer; }
+.row .ttl { font-weight: 600; }
+.row .ttl .date { font-weight: 400; color: var(--sub); font-size: 12px; margin-left: 8px; }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.badge {
+  font-size: 11px; background: var(--badge); color: var(--sub);
+  padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+}
+.badge.hi { color: var(--accent); }
+.watch { width: 22px; height: 22px; margin-top: 3px; flex: none; }
+.detail { display: none; padding: 4px 2px 14px 71px; font-size: 14px; }
+.item.open .detail { display: block; }
+.detail dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+.detail dt { color: var(--sub); font-size: 12px; white-space: nowrap; }
+.detail dd { margin: 0; }
+.detail .ev { color: var(--sub); font-size: 12px; }
+.more { display: block; width: 100%; margin: 14px 0; padding: 12px; }
+footer { border-top: 1px solid var(--line); padding: 14px 12px 30px; color: var(--sub); font-size: 12px; }
+footer a { color: var(--accent); }
+.warn { color: var(--warn); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>名探偵コナン エピソード検索</h1>
+  <div class="bar">
+    <input type="search" id="q" placeholder="検索" autocomplete="off">
+    <select id="qmode">
+      <option value="title">タイトル</option>
+      <option value="chars">登場人物</option>
+      <option value="both">両方</option>
+    </select>
+    <button id="toggleFilters">絞り込み</button>
+    <button id="clear" hidden>条件をクリア</button>
+    <select id="sort">
+      <option value="new">新しい順</option>
+      <option value="old">古い順</option>
+      <option value="random">ランダム</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="spoiler"> ネタバレOK</label>
+  </div>
+  <div id="active"></div>
+  <div id="filters"></div>
+</header>
+
+<div class="count" id="count">読み込み中…</div>
+<main><div id="list"></div><button class="more" id="more" hidden>もっと見る</button></main>
+
+<footer>
+  <p id="storageWarn" class="warn" hidden></p>
+  <p id="attribution"></p>
+  <p id="disclaimer"></p>
+  <p>
+    <button id="export">視聴履歴を書き出す</button>
+    <button id="copy">クリップボードにコピー</button>
+    <button id="import">読み込む</button>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+  </p>
+</footer>
+
+<script>
+"use strict";
+
+// ============================================================
+// 決定 1-4: data.json はバージョン付きで取得する。
+// これがないと週次更新してもブラウザが古いものを見続ける
+// ============================================================
+const DATA_URL = "data.json?v=2b24c89b46d1";
+
+// 決定 11-4: localStorage のキーは固定。データ更新で履歴が消えないように
+const KEY_WATCHED = "conan-index:watched";
+const KEY_SPOILER = "conan-index:spoiler";
+
+// ============================================================
+// localStorage は必ず例外を捕まえて使う。
+// iOS Safari のプライベートブラウズや、サイトデータを無効にした状態では
+// getItem/setItem がその場で throw する。ここは起動直後に走るので、
+// 素で呼ぶと【画面が真っ白になって一覧すら出ない】。
+// 視聴履歴が使えないのは不便なだけだが、検索が死ぬのは致命的。
+// SPEC 12.4 のエクスポート／インポートが最後の保険として残る
+// ============================================================
+const store = {
+  available: true,
+  get(key) {
+    try { return localStorage.getItem(key); }
+    catch { this.available = false; return null; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); return true; }
+    catch { this.available = false; return false; }
+  },
+};
+
+const PAGE = 100;                       // 決定 5-4
+const TOP_AXES = ["newcomer_friendly", "black_org", "case_type"];  // 決定 7-2
+// 決定 8-1: spinoff は「総集編」ではない。警察学校編・ルパン三世VSコナン・
+// コナンVSキッド・星影の魔術師といった本編級の作品と、防犯ガイド等のミニ動画、
+// 緋色の不在証明のような真の総集編が同居しているので「その他」と呼ぶ
+const TYPE_LABEL = { tv: "第%s話", movie: "劇場版%s作目", ova: "OVA%s", tvsp: "TVSP%s", spinoff: "その他%s" };
+const TYPE_CHIP = { tv: "TV", movie: "劇場版", ova: "OVA", tvsp: "TVSP", spinoff: "その他" };
+
+let DATA = null, AXES = {}, CHARS = {}, shown = PAGE;
+let watched = new Set(JSON.parse(store.get(KEY_WATCHED) || "[]"));
+// 展開中の作品。render() で一覧を作り直しても開いたままにする
+// （ネタバレOKを切り替えたときに詳細が閉じてしまうのを防ぐ）
+let opened = new Set();
+
+// 選択状態。axis→Set / chars→Set / type,format,canon
+const sel = { axes: {}, chars: new Set(), types: new Set(), formats: new Set(), canon: null };
+let spoilerOK = store.get(KEY_SPOILER) === "1";   // 決定 10-5: 初回 OFF、以降は前回を記憶
+let showUnknown = false;                // 決定 2-3
+// 決定 8-2: 視聴済みは隠さずグレーで残す。「あれ何話だっけ」を探せる。
+// 未視聴だけを見たいときは「未視聴のみ」チップで切り替える
+let hideWatched = false;
+let unknownExcluded = 0;                // 決定 2-3: 除外した「判定不能」の件数
+
+// ---------- 起動 ----------
+// data.json を渡せば画面が立ち上がる形にしてある。
+// 取得方法（fetch か埋め込みか）と組み立てを分けておくと、
+// 単一ファイル版を作るときに置き換えるのがこの1箇所で済む
+function start(d) {
+  DATA = d;
+  d.meta.axes.forEach(a => AXES[a.id] = a);
+  d.meta.characters.forEach(c => CHARS[c.id] = c);
+  document.getElementById("spoiler").checked = spoilerOK;
+  showAttribution(d.meta.attribution);          // 決定 12-1 / 12-2
+  if (!store.available) {                       // SPEC 12.4
+    const w = document.getElementById("storageWarn");
+    w.hidden = false;
+    w.textContent = "このブラウザでは視聴履歴を保存できません"
+      + "（プライベートブラウズか、サイトデータが無効になっています）。"
+      + "チェックはこのタブを閉じるまでの一時的なものになります。";
+  }
+  readURL();
+  buildFilters();
+  render();
+}
+
+fetch(DATA_URL).then(r => {
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}).then(start).catch(e => {
+  document.getElementById("count").innerHTML =
+    '<span class="warn">データを読み込めませんでした（' + e.message + '）</span>';
+});
+
+// ============================================================
+// 決定 3-1: 絞り込み条件を URL に持つ。
+// iPhone Safari はタブを破棄するため、条件が消えると毎回やり直しになる
+// ============================================================
+function readURL() {
+  const p = new URLSearchParams(location.search);
+  if (p.get("q")) document.getElementById("q").value = p.get("q");
+  if (p.get("sort")) document.getElementById("sort").value = p.get("sort");
+  if (p.get("qmode")) document.getElementById("qmode").value = p.get("qmode");
+  if (p.get("chars")) p.get("chars").split(",").forEach(v => sel.chars.add(v));
+  if (p.get("type")) p.get("type").split(",").forEach(v => sel.types.add(v));
+  if (p.get("format")) p.get("format").split(",").forEach(v => sel.formats.add(v));
+  if (p.get("canon")) sel.canon = p.get("canon");
+  if (p.get("unknown") === "1") showUnknown = true;
+  if (p.get("unwatched") === "1") hideWatched = true;      // 決定 8-2
+  Object.keys(AXES).forEach(id => {
+    const v = p.get(id);
+    if (v) sel.axes[id] = new Set(v.split(","));
+  });
+}
+function writeURL() {
+  const p = new URLSearchParams();
+  const q = document.getElementById("q").value.trim();
+  if (q) p.set("q", q);
+  const s = document.getElementById("sort").value;
+  if (s !== "new") p.set("sort", s);
+  const qm = document.getElementById("qmode").value;
+  if (qm !== "title") p.set("qmode", qm);
+  if (sel.chars.size) p.set("chars", [...sel.chars].join(","));
+  if (sel.types.size) p.set("type", [...sel.types].join(","));
+  if (sel.formats.size) p.set("format", [...sel.formats].join(","));
+  if (sel.canon) p.set("canon", sel.canon);
+  if (showUnknown) p.set("unknown", "1");
+  if (hideWatched) p.set("unwatched", "1");                // 決定 8-2
+  Object.entries(sel.axes).forEach(([id, set]) => { if (set.size) p.set(id, [...set].join(",")); });
+  history.replaceState(null, "", p.toString() ? "?" + p : location.pathname);
+}
+
+// ---------- フィルタUI ----------
+function chip(label, active, onClick) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  if (active) b.className = "on";
+  b.onclick = () => { onClick(); shown = PAGE; buildFilters(); render(); writeURL(); };
+  return b;
+}
+// 折りたたみの開閉状態。chip を1つ押すたびに buildFilters() が
+// パネルを作り直すため、覚えておかないと開いていたグループが毎回閉じる
+// （キャラを2人選ぶだけで「登場人物」を開き直すことになっていた）
+const groupOpen = {};
+function group(title, openDefault) {
+  const d = document.createElement("details");
+  d.className = "group";
+  d.open = title in groupOpen ? groupOpen[title] : !!openDefault;
+  const s = document.createElement("summary");
+  s.textContent = title;
+  d.appendChild(s);
+  d.addEventListener("toggle", () => groupOpen[title] = d.open);
+  return d;
+}
+
+function buildFilters() {
+  const box = document.getElementById("filters");
+  box.innerHTML = "";
+
+  // 決定 8-2 / 2-3: 一覧に関わる基本スイッチ
+  const basic = document.createElement("div");
+  basic.className = "opts";
+  // 決定 8-2: 既定は視聴済みもグレーで残す。隠したいときだけ ON にする
+  basic.appendChild(chip("未視聴のみ", hideWatched, () => hideWatched = !hideWatched));
+  basic.appendChild(chip("判定不能も含む", showUnknown, () => showUnknown = !showUnknown));
+  box.appendChild(basic);
+  const hint = document.createElement("div");
+  hint.className = "hint";
+  hint.textContent = "「判定不能」はあらすじから読み取れなかったもの。該当しないという意味ではありません。";
+  box.appendChild(hint);
+
+  // ============================================================
+  // 決定 8-1 / 8-5 / 8-3: 種別・形式・原作回
+  // 【パネルの先頭に置き、既定で開く】
+  // 「劇場版の中から探す」はこのツールの主要な入口のひとつなのに、
+  // 折りたたんだ状態で5番目にあると存在に気づけなかった。
+  // 種別は軸ではなく「どこを探すか」の指定なので、軸より前が筋でもある
+  // ============================================================
+  const meta = group("種別・形式", true);
+  const mo = document.createElement("div"); mo.className = "opts";
+  Object.entries(TYPE_CHIP)                                              // 決定 8-1
+    .forEach(([k, l]) => mo.appendChild(chip(l, sel.types.has(k),
+      () => sel.types.has(k) ? sel.types.delete(k) : sel.types.add(k))));
+  ["単発","前後編","長編"].forEach(f => mo.appendChild(chip(f, sel.formats.has(f),
+    () => sel.formats.has(f) ? sel.formats.delete(f) : sel.formats.add(f))));
+  mo.appendChild(chip("原作回", sel.canon === "1", () => sel.canon = sel.canon === "1" ? null : "1"));
+  mo.appendChild(chip("アニオリ", sel.canon === "0", () => sel.canon = sel.canon === "0" ? null : "0"));
+  meta.appendChild(mo);
+  box.appendChild(meta);
+
+  // 決定 7-2: よく使う3軸を上に
+  TOP_AXES.forEach(id => box.appendChild(axisGroup(AXES[id], true)));
+
+  // ============================================================
+  // 決定 6-1: キャラはグループ別の折りたたみ
+  // 決定 6-2: ネタバレOFF のとき隠すのは【キャラ】と【グループ名】で別物。
+  //   - c.spoiler のキャラ（12名）は候補ごと出さない
+  //   - グループ名がネタバレのもの（赤井家・組織への潜入者・ラムの正体候補・
+  //     組織の背景人物）は見出しを出さず、所属キャラを「その他の人物」に寄せる
+  //   これで灰原哀・世良真純・安室透など9名は OFF のままでも絞り込める
+  // ============================================================
+  const g = group("登場人物", false);
+  const OTHER = "_other";
+  const byGroup = {};
+  DATA.meta.characters.forEach(c => {
+    if (!spoilerOK && c.spoiler) return;
+    const visible = (c.groups || []).filter(
+      gk => DATA.meta.groups[gk] && !(!spoilerOK && DATA.meta.groups[gk].spoiler));
+    // 見える所属が1つも無いキャラは「その他の人物」へ。捨ててはいけない
+    (visible.length ? visible : [OTHER]).forEach(
+      gk => (byGroup[gk] = byGroup[gk] || []).push(c));
+  });
+  const groupName = gk => gk === OTHER ? "その他の人物" : DATA.meta.groups[gk].label_ja;
+  // その他の人物は最後に置く
+  Object.keys(byGroup).sort((a, b) => (a === OTHER) - (b === OTHER)).forEach(gk => {
+    const list = byGroup[gk];
+    const sub = group(groupName(gk) + "（" + list.length + "）", false);
+    const opts = document.createElement("div");
+    opts.className = "opts";
+    list.forEach(c => opts.appendChild(chip(c.label_ja, sel.chars.has(c.id),
+      () => sel.chars.has(c.id) ? sel.chars.delete(c.id) : sel.chars.add(c.id))));
+    sub.appendChild(opts);
+    g.appendChild(sub);
+  });
+  if (!spoilerOK) {
+    const hidden = DATA.meta.characters.filter(c => c.spoiler).length;
+    const n = document.createElement("div");
+    n.className = "hint";
+    n.textContent = "ネタバレOFF のため、正体・存在そのものがネタバレになる "
+      + hidden + " 名は候補に出ていません（赤井秀一など）。";
+    g.appendChild(n);
+  }
+  box.appendChild(g);
+
+  // 決定 7-1 / 7-3: 残りの軸。romance は最後
+  DATA.meta.axes.filter(a => !TOP_AXES.includes(a.id) && a.id !== "romance")
+    .forEach(a => box.appendChild(axisGroup(a, false)));
+  const rom = DATA.meta.axes.find(a => a.id === "romance");
+  if (rom) box.appendChild(axisGroup(rom, false));
+}
+
+function axisGroup(axis, openDefault) {
+  // 決定 10-2: ネタバレ扱いの軸は OFF のとき出さない
+  if (axis.spoiler && !spoilerOK) {
+    const g = group(axis.label_ja + "（ネタバレOKで表示）", false);
+    return g;
+  }
+  const g = group(axis.label_ja, openDefault);
+  const opts = document.createElement("div");
+  opts.className = "opts";
+  if (axis.couples) {
+    Object.entries(axis.couples).forEach(([cp, label]) => {
+      const key = cp;
+      const set = sel.axes[axis.id] = sel.axes[axis.id] || new Set();
+      opts.appendChild(chip(label, set.has(key), () => set.has(key) ? set.delete(key) : set.add(key)));
+    });
+  } else {
+    Object.entries(axis.levels).forEach(([k, desc]) => {
+      if (k === "unknown") return;
+      const set = sel.axes[axis.id] = sel.axes[axis.id] || new Set();
+      const b = chip(levelLabel(axis.id, k), set.has(k), () => set.has(k) ? set.delete(k) : set.add(k));
+      b.title = desc;
+      opts.appendChild(b);
+    });
+  }
+  g.appendChild(opts);
+  return g;
+}
+
+// 表示用の短いラベル（levels の説明文は長すぎるため）
+const L = {
+  black_org: { main: "メイン", sub: "サブ", none: "なし" },
+  newcomer_friendly: { standalone: "単独で楽しめる", light_context: "軽い前提", requires_context: "前提必須" },
+  case_type: { murder: "殺人", assault: "傷害・未遂", theft: "盗難・怪盗", kidnapping: "誘拐",
+               other_crime: "その他事件", non_crime: "非犯罪" },
+  setting: { school: "学校", travel: "旅行", closed_space: "閉鎖空間", vehicle: "乗り物",
+             daily: "日常", other: "その他" },
+  shinichi_form: { as_shinichi: "新一の姿", voice_only: "声のみ", flashback: "回想",
+                   bowtie_only: "蝶ネクタイ", conan_only: "コナンのみ" },
+  trick_type: { locked_room: "密室", alibi: "アリバイ", impersonation: "なりすまし", remote: "遠隔",
+                disguised_cause: "死因偽装", code: "暗号", physical: "物理", poison: "毒物",
+                theft_trick: "怪盗", psychological: "心理", no_trick: "トリックなし" }
+};
+function levelLabel(axisId, key) { return (L[axisId] && L[axisId][key]) || key; }
+
+// ---------- 絞り込み ----------
+function match(w) {
+  if (hideWatched && watched.has(w.id)) return false;                    // 決定 8-2
+  if (sel.types.size && !sel.types.has(w.type)) return false;            // 決定 8-1
+  if (sel.formats.size && !sel.formats.has(w.format)) return false;      // 決定 8-5
+  if (sel.canon === "1" && !w.is_canon) return false;                    // 決定 8-3
+  if (sel.canon === "0" && w.is_canon) return false;
+  const q = document.getElementById("q").value.trim().toLowerCase();     // 決定 2-2
+  if (q) {
+    const mode = document.getElementById("qmode").value;
+    let hit = false;
+    if (mode === "title" || mode === "both") {
+      hit = ((w.title_ja || "") + " " + (w.title_en || "")).toLowerCase().includes(q);
+    }
+    if (!hit && (mode === "chars" || mode === "both")) {
+      // 決定 6-2 と揃える: ネタバレOFF のときは spoiler キャラを検索対象から外す。
+      // 外さないと、候補に出していないキャラで絞れてしまい方針が崩れる
+      hit = (w.characters || []).some(id => {
+        const c = CHARS[id];
+        if (!c || (!spoilerOK && c.spoiler)) return false;
+        return c.label_ja.toLowerCase().includes(q);
+      });
+    }
+    if (!hit) return false;
+  }
+  // 決定 2-1: キャラは OR、軸をまたぐと AND
+  if (sel.chars.size && ![...sel.chars].some(c => (w.characters || []).includes(c))) return false;
+  for (const [axisId, set] of Object.entries(sel.axes)) {
+    if (!set.size) continue;
+    const axis = AXES[axisId], got = w.labels[axisId];
+    if (!got) return false;
+    if (axis.couples) {
+      // CP は「main か sub のいずれか」を該当とみなす
+      const hit = [...set].some(cp => got[cp] && (got[cp].level === "main" || got[cp].level === "sub"));
+      if (!hit) return false;
+    } else {
+      const lv = Array.isArray(got.level) ? got.level : [got.level];
+      if (lv.includes("unknown")) { if (!showUnknown) return false; }     // 決定 2-3
+      else if (![...set].some(v => lv.includes(v))) return false;
+    }
+  }
+  return true;
+}
+
+function sortWorks(list) {
+  const s = document.getElementById("sort").value;                        // 決定 9-1 / 9-2
+  const order = { tv: 0, movie: 1, ova: 2, tvsp: 3, spinoff: 4 };
+  if (s === "random") return list.map(w => [Math.random(), w]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+  const dir = s === "old" ? 1 : -1;
+  return [...list].sort((a, b) =>
+    (order[a.type] - order[b.type]) * (s === "old" ? 1 : 1) || dir * (a.number - b.number));
+}
+
+// ---------- 描画 ----------
+function render() {
+  const hits = sortWorks(DATA.works.filter(match));
+
+  // ============================================================
+  // 決定 2-3: 「判定不能」を除外して減った件数を必ず見せる。
+  // 「密室で絞ったら44件」と出ても unknown 51件に密室回が埋もれている
+  // 可能性があり、黙って落とすと取りこぼしに気づけない（SPEC 5.4）
+  // ============================================================
+  unknownExcluded = 0;
+  if (!showUnknown && Object.values(sel.axes).some(s => s.size)) {
+    showUnknown = true;
+    unknownExcluded = DATA.works.filter(match).length - hits.length;
+    showUnknown = false;
+  }
+
+  const count = document.getElementById("count");                        // 決定 5-3
+  count.textContent = hits.length + " 件" + (hideWatched ? "（未視聴のみ）" : "");
+  if (unknownExcluded > 0) {
+    count.append("　");
+    const b = document.createElement("button");
+    b.className = "link";
+    b.textContent = "判定不能 " + unknownExcluded + " 件を除外中 → 含める";
+    b.onclick = () => { showUnknown = true; shown = PAGE; buildFilters(); render(); writeURL(); };
+    count.appendChild(b);
+  }
+  renderActive();
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  hits.slice(0, shown).forEach(w => list.appendChild(itemEl(w)));
+  const more = document.getElementById("more");                          // 決定 5-4
+  more.hidden = hits.length <= shown;
+  more.textContent = "もっと見る（残り " + Math.max(0, hits.length - shown) + " 件）";
+}
+
+// ============================================================
+// 絞り込み中の条件を、パネルを閉じていても見える位置に出す。
+// タップでその条件だけ解除できる
+// ============================================================
+function renderActive() {
+  const box = document.getElementById("active");
+  box.innerHTML = "";
+  const tags = [];
+  const add = (label, remove) => tags.push([label, remove]);
+
+  if (hideWatched) add("未視聴のみ", () => hideWatched = false);        // 決定 8-2
+  if (showUnknown) add("判定不能も含む", () => showUnknown = false);
+  sel.chars.forEach(id => add((CHARS[id] || {}).label_ja || id, () => sel.chars.delete(id)));
+  sel.types.forEach(t => add(TYPE_CHIP[t] || t, () => sel.types.delete(t)));
+  sel.formats.forEach(f => add(f, () => sel.formats.delete(f)));
+  if (sel.canon === "1") add("原作回", () => sel.canon = null);
+  if (sel.canon === "0") add("アニオリ", () => sel.canon = null);
+  Object.entries(sel.axes).forEach(([axisId, set]) => {
+    const axis = AXES[axisId];
+    if (!axis) return;
+    set.forEach(v => {
+      const name = axis.couples ? axis.couples[v] : levelLabel(axisId, v);
+      add(axis.label_ja + ": " + name, () => set.delete(v));
+    });
+  });
+
+  const q = document.getElementById("q").value.trim();
+  if (q) {
+    const mode = { title: "タイトル", chars: "登場人物", both: "両方" }[document.getElementById("qmode").value];
+    add(mode + "「" + q + "」", () => document.getElementById("q").value = "");
+  }
+
+  if (tags.length) {
+    const lbl = document.createElement("span");
+    lbl.className = "lbl"; lbl.textContent = "絞り込み中:";
+    box.appendChild(lbl);
+  }
+  tags.forEach(([label, remove]) => {
+    const b = document.createElement("button");
+    b.className = "tag"; b.textContent = label;
+    b.title = "この条件を外す";
+    b.onclick = () => { remove(); shown = PAGE; buildFilters(); render(); writeURL(); };
+    box.appendChild(b);
+  });
+
+  // 「絞り込み」ボタン自体にも件数を出す
+  const tf = document.getElementById("toggleFilters");
+  tf.textContent = tags.length ? "絞り込み " + tags.length : "絞り込み";
+  tf.classList.toggle("active", tags.length > 0);
+  document.getElementById("clear").hidden = tags.length === 0;
+}
+
+function clearAll() {
+  sel.chars.clear(); sel.types.clear(); sel.formats.clear(); sel.canon = null;
+  Object.values(sel.axes).forEach(s => s.clear());
+  hideWatched = false; showUnknown = false;                              // 決定 8-2
+  document.getElementById("q").value = "";
+  shown = PAGE; buildFilters(); render(); writeURL();
+}
+
+function numberLabel(w) {                                                // 決定 5-6
+  return (TYPE_LABEL[w.type] || "%s").replace("%s", w.number);
+}
+
+// ============================================================
+// 表示用のタイトル。劇場版などの「名探偵コナン 」を落とす。
+// 30作すべてに同じ6文字が付いていて、iPhone の幅では本題が折り返す。
+// 種別は左の「劇場版26作目」（決定 5-6）で分かるので情報も失われない。
+//
+// 【データは書き換えない。表示時にだけ削る】
+//   - 検索は元のタイトルに対して効く（決定 2-2）。
+//     「名探偵コナン 緋色の弾丸」で検索しても当たる
+//   - build を通らないので週次・月次の処理は一切変わらない
+//   - やめたくなったらこの関数を消すだけで戻る
+//
+// 例外が2つある（実データで確認）:
+//   - 「名探偵コナンVS怪盗キッド」は接頭辞ではなく題名そのもの。削ると別物になる
+//   - movie30 は title_ja が null（未公開）。フォールバックに任せる
+// ============================================================
+const TITLE_PREFIX = /^名探偵コナン[\s　]*/;
+function displayTitle(w) {
+  const raw = w.title_ja || w.title_en || w.id;
+  if (w.type === "tv") return raw;            // TVサブタイトルに接頭辞は付かない
+  const short = raw.replace(TITLE_PREFIX, "");
+  if (!short || /^VS/i.test(short)) return raw;
+  return short;
+}
+
+function itemEl(w) {
+  const el = document.createElement("div");
+  el.className = "item";
+  if (watched.has(w.id)) el.classList.add("watched");                    // 決定 8-2
+
+  const row = document.createElement("div"); row.className = "row";
+  const cb = document.createElement("input");                            // 決定 11-1
+  cb.type = "checkbox"; cb.className = "watch"; cb.checked = watched.has(w.id);
+  cb.title = "視聴済み";
+  cb.onclick = e => {
+    e.stopPropagation();
+    cb.checked ? watched.add(w.id) : watched.delete(w.id);
+    store.set(KEY_WATCHED, JSON.stringify([...watched]));
+    // 決定 8-2: 隠す設定なら一覧から消し、そうでなければその場でグレーにする
+    if (hideWatched) render();
+    else el.classList.toggle("watched", cb.checked);
+  };
+  const no = document.createElement("div"); no.className = "no"; no.textContent = numberLabel(w);
+  const body = document.createElement("div"); body.className = "body";
+  const ttl = document.createElement("div"); ttl.className = "ttl";
+  ttl.textContent = displayTitle(w);
+  if (w.air_date) {                                                      // 決定 5-1（検討中）
+    const dt = document.createElement("span"); dt.className = "date";
+    dt.textContent = w.air_date;
+    ttl.appendChild(dt);
+  }
+  body.appendChild(ttl);
+  body.appendChild(badgesEl(w));
+  if (opened.has(w.id)) el.classList.add("open");
+  body.onclick = () => {                                                 // 決定 4-1
+    const on = el.classList.toggle("open");
+    on ? opened.add(w.id) : opened.delete(w.id);
+  };
+  row.append(cb, no, body);
+  el.appendChild(row);
+  el.appendChild(detailEl(w));
+  return el;
+}
+
+// 決定 5-2: 絞り込みに使った軸を優先してバッジにする
+function badgesEl(w) {
+  const box = document.createElement("div"); box.className = "badges";
+  const used = Object.entries(sel.axes).filter(([, s]) => s.size).map(([id]) => id);
+  const order = [...used, ...TOP_AXES.filter(a => !used.includes(a))];
+  let n = 0;
+  for (const axisId of order) {
+    if (n >= 3) break;
+    const axis = AXES[axisId], got = w.labels[axisId];
+    if (!axis || !got) continue;
+    if (axis.spoiler && !spoilerOK) continue;                            // 決定 10-2
+    if (axis.couples) continue;
+    const lv = Array.isArray(got.level) ? got.level : [got.level];
+    if (lv.includes("unknown")) continue;
+    const b = document.createElement("span");
+    b.className = "badge" + (used.includes(axisId) ? " hi" : "");
+    b.textContent = lv.map(v => levelLabel(axisId, v)).join("・");
+    box.appendChild(b); n++;
+  }
+  if (w.is_canon) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "原作"; box.appendChild(b); }
+  return box;
+}
+
+function detailEl(w) {
+  const d = document.createElement("div"); d.className = "detail";
+  const dl = document.createElement("dl");
+  const add = (k, v) => {
+    if (!v) return;
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.append(v);
+    dl.append(dt, dd);
+  };
+  add("放送日", w.air_date || "");
+  add("形式", w.format || "");
+  if (w.manga_vol) add("原作", "第" + w.manga_vol + "巻");
+  if (w.arc_name && spoilerOK) add("収録", w.arc_name);                  // 決定 10-2
+
+  DATA.meta.axes.forEach(axis => {
+    const got = w.labels[axis.id];
+    if (!got) return;
+    if (axis.spoiler && !spoilerOK) return;
+    if (axis.couples) {
+      const hits = Object.entries(got).filter(([, v]) => v.level === "main" || v.level === "sub")
+        .map(([cp, v]) => axis.couples[cp] + "（" + (v.level === "main" ? "メイン" : "サブ") + "）");
+      if (hits.length) add(axis.label_ja, hits.join("、"));
+      return;
+    }
+    const lv = Array.isArray(got.level) ? got.level : [got.level];
+    if (lv.includes("unknown")) return;
+    // 決定 10-3（2026-07-31 改定）: 判定根拠は【ネタバレOK でも出さない】。
+    // iPhone の縦幅では7軸ぶんの引用が詰まって一覧性を失う。
+    // 「どういう話か」は根拠の断片ではなく summary_ja（自作のあらすじ）で見る
+    add(axis.label_ja, lv.map(v => levelLabel(axis.id, v)).join("・"));
+  });
+  d.appendChild(dl);
+  if (w.source_url) {
+    const p = document.createElement("p");
+    const a = document.createElement("a");
+    a.href = w.source_url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "出典: Detective Conan Wiki";
+    p.appendChild(a); d.appendChild(p);
+  }
+  return d;
+}
+
+// ---------- 操作 ----------
+document.getElementById("toggleFilters").onclick = e => {               // 決定 4-2
+  const f = document.getElementById("filters");
+  f.classList.toggle("open");
+  e.target.classList.toggle("on", f.classList.contains("open"));
+};
+document.getElementById("q").oninput = () => { shown = PAGE; render(); writeURL(); };
+document.getElementById("sort").onchange = () => { shown = PAGE; render(); writeURL(); };
+document.getElementById("qmode").onchange = () => { shown = PAGE; render(); writeURL(); };
+document.getElementById("spoiler").onchange = e => {                     // 決定 10-1 / 10-4
+  spoilerOK = e.target.checked;
+  store.set(KEY_SPOILER, spoilerOK ? "1" : "0");
+  buildFilters(); render();
+};
+document.getElementById("clear").onclick = clearAll;
+document.getElementById("more").onclick = () => { shown += PAGE; render(); };
+
+// 決定 11-3: エクスポート／インポート。iOS はDL挙動が不安定なのでコピーも用意
+function payload() {
+  return JSON.stringify({ app: "conan-index", exported_at: new Date().toISOString(),
+                          watched: [...watched] }, null, 1);
+}
+document.getElementById("export").onclick = () => {
+  const url = URL.createObjectURL(new Blob([payload()], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = "conan-watched.json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+document.getElementById("copy").onclick = async e => {
+  try { await navigator.clipboard.writeText(payload()); e.target.textContent = "コピーしました"; }
+  catch { prompt("下記をコピーしてください", payload()); }
+  setTimeout(() => e.target.textContent = "クリップボードにコピー", 1800);
+};
+document.getElementById("import").onclick = () => document.getElementById("importFile").click();
+document.getElementById("importFile").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => {
+    const d = JSON.parse(t);
+    if (!Array.isArray(d.watched)) throw new Error("形式が違います");
+    watched = new Set(d.watched);
+    store.set(KEY_WATCHED, JSON.stringify([...watched]));
+    render();
+    alert("視聴履歴 " + watched.size + " 件を読み込みました");
+  }).catch(err => alert("読み込めませんでした: " + err.message));
+};
+
+// 決定 12-1 / 12-2: 帰属表示と免責は data.json の meta から出す。
+// start() から呼ぶ（以前はここで data.json をもう一度 fetch していて、
+// 2.1MB を二度取りに行っていた）
+function showAttribution(at) {
+  document.getElementById("attribution").innerHTML =
+    "データ出典: " + at.sources.map(s =>
+      '<a href="' + s.url + '" target="_blank" rel="noopener">' + s.name + "</a>（" + s.license + "）"
+    ).join(" / ") + "<br>" + at.notes.join(" ");
+  document.getElementById("disclaimer").textContent = at.disclaimer;
+}
+</script>
+</body>
+</html>
