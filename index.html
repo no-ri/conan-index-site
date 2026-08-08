@@ -480,13 +480,28 @@ function match(w) {
   return true;
 }
 
+// ============================================================
+// 決定 9-1 / 9-2: **放送日で通して並べる。種別は第1キーにしない。**
+// 以前は種別（tv → movie → ova → tvsp → spinoff）が第1キーだったため、
+// 公開されたばかりの劇場版が 1200 話ぶんの TV の後ろに沈み、
+// 「新しい順」にしても新作が見つからなかった。
+// 9-1 の推奨が「話数の新しい順（放送日順とほぼ同じ）」としていたのは
+// TV 単体でしか成り立たない前提だった。
+// ============================================================
 function sortWorks(list) {
-  const s = document.getElementById("sort").value;                        // 決定 9-1 / 9-2
-  const order = { tv: 0, movie: 1, ova: 2, tvsp: 3, spinoff: 4 };
+  const s = document.getElementById("sort").value;
   if (s === "random") return list.map(w => [Math.random(), w]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+  const order = { tv: 0, movie: 1, ova: 2, tvsp: 3, spinoff: 4 };
   const dir = s === "old" ? 1 : -1;
-  return [...list].sort((a, b) =>
-    (order[a.type] - order[b.type]) * (s === "old" ? 1 : 1) || dir * (a.number - b.number));
+  return [...list].sort((a, b) => {
+    // 放送日が無い作品（未公開の劇場版・記録の無いミニ動画）は、
+    // 向きに関わらず末尾へ。「新しい順」の先頭に出すと未公開作が最上位に来るし、
+    // 「古い順」の先頭に出すと最古の回を探せなくなる
+    if (!a.air_date !== !b.air_date) return a.air_date ? -1 : 1;
+    if (a.air_date && a.air_date !== b.air_date) return dir * (a.air_date < b.air_date ? -1 : 1);
+    // 同日（前後編の分割放送など）と、放送日が無いものどうしの安定した並び
+    return (order[a.type] - order[b.type]) || dir * (a.number - b.number);
+  });
 }
 
 // ---------- 描画 ----------
