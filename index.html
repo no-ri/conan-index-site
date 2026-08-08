@@ -341,6 +341,20 @@ function buildFilters() {
   meta.appendChild(mo);
   box.appendChild(meta);
 
+  // ============================================================
+  // ここから下は AI が判定したラベル。上の「種別・形式・原作回」は
+  // wiki 由来の事実データなので、この注意書きより上に置いている。
+  // パネルの先頭に出すと事実データまで AI 判定に見えてしまう。
+  //
+  // 精度を測れているのは7軸中3軸だけで（gold.csv は 30作品 × 3軸）、
+  // うち newcomer_friendly は目標未達（standalone の recall 0.70 / 目標 0.9）。
+  // setting / shinichi_form / trick_type / romance は未測定（SPEC 11章）
+  // ============================================================
+  const aiNote = document.createElement("div");
+  aiNote.className = "hint";
+  aiNote.textContent = "以下のラベルは AI による自動分類です。精度は調整中のため、誤りが含まれる場合があります。";
+  box.appendChild(aiNote);
+
   // 決定 7-2: よく使う3軸を上に
   TOP_AXES.forEach(id => box.appendChild(axisGroup(AXES[id], true)));
 
